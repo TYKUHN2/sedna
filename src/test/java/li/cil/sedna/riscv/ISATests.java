@@ -53,9 +53,11 @@ public final class ISATests {
 
                         final long toHostAddress = getToHostAddress(elf);
 
-                        final MemoryMap memoryMap = new SimpleMemoryMap();
+                        final SimpleMemoryMap memoryMap = new SimpleMemoryMap();
                         final R5CPU cpu = R5CPU.create(memoryMap);
                         final HostTargetInterface htif = new HostTargetInterface();
+
+                        memoryMap.setCpu(cpu);
 
                         // RAM block below and potentially up to HTIF.
                         if (PHYSICAL_MEMORY_START < toHostAddress) {

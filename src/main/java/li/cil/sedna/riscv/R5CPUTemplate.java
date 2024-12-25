@@ -251,6 +251,25 @@ final class R5CPUTemplate implements R5CPU {
     }
 
     @Override
+    public void notify(long address, int size) {
+        final int index = (int) ((reservation_set >>> R5.PAGE_ADDRESS_SHIFT) & (TLB_SIZE - 1));
+        final long hash = reservation_set & ~R5.PAGE_ADDRESS_MASK;
+        final TLBEntry entry = loadTLB[index];
+        if (entry.hash != hash)
+            reservation_set = -1;
+        else {
+            final MappedMemoryRange range = physicalMemory.getMemoryRange(entry.device).orElse(null);
+            if (range == null)
+                reservation_set = -1;
+            else {
+                final long pAddress = reservation_set + entry.toOffset + range.start;
+                if ((pAddress + 8) > address && pAddress < (address + size))
+                    reservation_set = -1;
+            }
+        }
+    }
+
+    @Override
     public CPUDebugInterface getDebugInterface() {
         return debugInterface;
     }
@@ -1196,6 +1215,9 @@ final class R5CPUTemplate implements R5CPU {
         final long hash = address & ~R5.PAGE_ADDRESS_MASK;
         final TLBEntry entry = storeTLB[index];
         if (entry.hash == hash) {
+            // Would just use a hook in MemoryMap, but it is inconsistently called.
+            notify(address, size);
+
             try {
                 entry.device.store((int) (address + entry.toOffset), value, sizeLog2);
             } catch (final MemoryAccessException e) {
@@ -1445,6 +1467,8 @@ final class R5CPUTemplate implements R5CPU {
         for (int i = 0; i < TLB_SIZE; i++) {
             storeTLB[i].hash = -1;
         }
+
+        reservation_set = -1;
     }
 
     private void flushTLB(final long address) {
@@ -2249,13 +2273,17 @@ final class R5CPUTemplate implements R5CPU {
 
     ///////////////////////////////////////////////////////////////////
     // RV32A Standard Extension
+    // TODO: Add REL/ACQ to LR.W/SC.W
 
     @Instruction("LR.W")
     private void lr_w(@Field("rd") final int rd,
                       @Field("rs1") final int rs1) throws R5MemoryAccessException {
         final long address = x[rs1];
+        if ((address & 0x08) != 0) // Feel free to remove if you want to tackle cross-page atomics
+            throw new R5MemoryAccessException(address, R5.EXCEPTION_MISALIGNED_LOAD);
+
         final int result = load32(address);
-        reservation_set = address;
+        reservation_set = address; // Consider changing this to the physical address for easier use
 
         if (rd != 0) {
             x[rd] = result;
@@ -2268,6 +2296,9 @@ final class R5CPUTemplate implements R5CPU {
                       @Field("rs2") final int rs2) throws R5MemoryAccessException {
         final int result;
         final long address = x[rs1];
+        if ((address & 0x08) != 0) // Feel free to remove if you want to tackle cross-page atomics
+            throw new R5MemoryAccessException(address, R5.EXCEPTION_MISALIGNED_STORE);
+
         if (address == reservation_set) {
             store32(address, (int) x[rs2]);
             result = 0;
@@ -2425,6 +2456,9 @@ final class R5CPUTemplate implements R5CPU {
     private void lr_d(@Field("rd") final int rd,
                       @Field("rs1") final int rs1) throws R5MemoryAccessException {
         final long address = x[rs1];
+        if ((address & 0x08) != 0) // Feel free to remove if you want to tackle cross-page atomics
+            throw new R5MemoryAccessException(address, R5.EXCEPTION_MISALIGNED_LOAD);
+
         final long result = load64(address);
         reservation_set = address;
 
@@ -2439,6 +2473,9 @@ final class R5CPUTemplate implements R5CPU {
                       @Field("rs2") final int rs2) throws R5MemoryAccessException {
         final int result;
         final long address = x[rs1];
+        if ((address & 0x08) != 0) // Feel free to remove if you want to tackle cross-page atomics
+            throw new R5MemoryAccessException(address, R5.EXCEPTION_MISALIGNED_STORE);
+
         if (address == reservation_set) {
             store64(address, x[rs2]);
             result = 0;
