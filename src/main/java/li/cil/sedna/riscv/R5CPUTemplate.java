@@ -1205,6 +1205,9 @@ final class R5CPUTemplate implements R5CPU {
     }
 
     private void storex(final long address, final long value, final int size, final int sizeLog2) throws R5MemoryAccessException {
+        // Would just use a hook in MemoryMap, but it is inconsistently called.
+        notify(address, size);
+
         final long lastAddress = address + size / 8 - 1;
         if ((address & ~R5.PAGE_ADDRESS_MASK) != (lastAddress & ~R5.PAGE_ADDRESS_MASK)) {
             storexPageMisaligned(address, value, size);
@@ -1215,9 +1218,6 @@ final class R5CPUTemplate implements R5CPU {
         final long hash = address & ~R5.PAGE_ADDRESS_MASK;
         final TLBEntry entry = storeTLB[index];
         if (entry.hash == hash) {
-            // Would just use a hook in MemoryMap, but it is inconsistently called.
-            notify(address, size);
-
             try {
                 entry.device.store((int) (address + entry.toOffset), value, sizeLog2);
             } catch (final MemoryAccessException e) {
