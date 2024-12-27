@@ -196,6 +196,11 @@ public final class ISATests {
             }
         }
 
+        @Override
+        public boolean storeCAS(int offset, long value, long expected, int sizeLog2) throws MemoryAccessException {
+            throw new MemoryAccessException(); // Seems trivial to implement, but unnecessary.
+        }
+
         protected void handleCommand() {
             if (toHost != 0) {
                 final int exitcode = (int) (toHost >>> 1);
