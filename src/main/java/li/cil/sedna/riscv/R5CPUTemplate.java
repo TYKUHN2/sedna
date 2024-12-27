@@ -2317,7 +2317,6 @@ final class R5CPUTemplate implements R5CPU {
 
     ///////////////////////////////////////////////////////////////////
     // RV32A Standard Extension
-    // TODO: Add RL/AC
 
     @Instruction("LR.W")
     private void lr_w(@Field("rd") final int rd,
