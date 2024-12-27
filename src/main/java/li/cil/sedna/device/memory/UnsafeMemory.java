@@ -7,8 +7,6 @@ import li.cil.sedna.utils.DirectByteBufferUtils;
 import li.cil.sedna.utils.UnsafeGetter;
 import sun.misc.Unsafe;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.lang.reflect.Field;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
@@ -17,10 +15,6 @@ import java.nio.ByteOrder;
 // Tends to be around 10% faster than ByteBufferMemory during regular emulation.
 public final class UnsafeMemory extends PhysicalMemory {
     private static final Unsafe UNSAFE = UnsafeGetter.get();
-
-    private static final VarHandle view16 = MethodHandles.byteBufferViewVarHandle(short[].class, ByteOrder.LITTLE_ENDIAN);
-    private static final VarHandle view32 = MethodHandles.byteBufferViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
-    private static final VarHandle view64 = MethodHandles.byteBufferViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
 
     public static PhysicalMemory create(final int size) {
         if ((size & 0b11) != 0)
@@ -120,9 +114,9 @@ public final class UnsafeMemory extends PhysicalMemory {
 
         return switch (sizeLog2) {
             case Sizes.SIZE_8_LOG2 -> throw new MemoryAccessException();
-            case Sizes.SIZE_16_LOG2 -> view16.compareAndSet(buffer, offset, expected, value);
-            case Sizes.SIZE_32_LOG2 -> view32.compareAndSet(buffer, offset, expected, value);
-            case Sizes.SIZE_64_LOG2 -> view64.compareAndSet(buffer, offset, expected, value);
+            case Sizes.SIZE_16_LOG2 -> throw new MemoryAccessException(); //view16.compareAndSet(buffer, offset, expected, value);
+            case Sizes.SIZE_32_LOG2 -> UNSAFE.compareAndSwapInt(null, address + offset, (int)expected, (int)value); //view32.compareAndSet(buffer, offset, expected, value);
+            case Sizes.SIZE_64_LOG2 -> UNSAFE.compareAndSwapLong(null, address + offset, expected, value);
             default -> throw new IllegalArgumentException();
         };
     }
