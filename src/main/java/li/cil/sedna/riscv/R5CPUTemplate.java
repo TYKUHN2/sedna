@@ -252,6 +252,9 @@ final class R5CPUTemplate implements R5CPU {
 
     @Override
     public void notify(long address, int size) {
+        if (reservation_set == -1)
+            return;
+
         final int index = (int) ((reservation_set >>> R5.PAGE_ADDRESS_SHIFT) & (TLB_SIZE - 1));
         final long hash = reservation_set & ~R5.PAGE_ADDRESS_MASK;
         final TLBEntry entry = loadTLB[index];
@@ -263,7 +266,7 @@ final class R5CPUTemplate implements R5CPU {
                 reservation_set = -1;
             else {
                 final long pAddress = reservation_set + entry.toOffset + range.start;
-                if ((pAddress + 8) > address && pAddress < (address + size))
+                if ((pAddress + 8) > address && pAddress < (address + (size / 8)))
                     reservation_set = -1;
             }
         }
@@ -1206,7 +1209,6 @@ final class R5CPUTemplate implements R5CPU {
 
     private void storex(final long address, final long value, final int size, final int sizeLog2) throws R5MemoryAccessException {
         // Would just use a hook in MemoryMap, but it is inconsistently called.
-        notify(address, size);
 
         final long lastAddress = address + size / 8 - 1;
         if ((address & ~R5.PAGE_ADDRESS_MASK) != (lastAddress & ~R5.PAGE_ADDRESS_MASK)) {
@@ -1218,6 +1220,12 @@ final class R5CPUTemplate implements R5CPU {
         final long hash = address & ~R5.PAGE_ADDRESS_MASK;
         final TLBEntry entry = storeTLB[index];
         if (entry.hash == hash) {
+            final long pAddr = physicalMemory.getMemoryRange(entry.device)
+                .map(range -> range.start + address + entry.toOffset)
+                .orElse(-1L);
+            if (pAddr != -1)
+                notify(pAddr, size);
+
             try {
                 entry.device.store((int) (address + entry.toOffset), value, sizeLog2);
             } catch (final MemoryAccessException e) {
@@ -1233,7 +1241,7 @@ final class R5CPUTemplate implements R5CPU {
         notify(address, size);
 
         final long lastAddress = address + size / 8 - 1;
-        if ((address & (size / 8)) != 0 || (address & ~R5.PAGE_ADDRESS_MASK) != (lastAddress & ~R5.PAGE_ADDRESS_MASK))
+        if ((address & ((size / 8) - 1)) != 0 || (address & ~R5.PAGE_ADDRESS_MASK) != (lastAddress & ~R5.PAGE_ADDRESS_MASK))
             throw new R5MemoryAccessException(address, R5.EXCEPTION_MISALIGNED_STORE);
 
         final int index = (int) ((address >>> R5.PAGE_ADDRESS_SHIFT) & (TLB_SIZE - 1));
@@ -1288,6 +1296,8 @@ final class R5CPUTemplate implements R5CPU {
 
     private void storeSlow(final long address, final long value, final int sizeLog2) throws R5MemoryAccessException {
         final long physicalAddress = getPhysicalAddress(address, MemoryAccessType.STORE, false);
+        notify(physicalAddress, 8 << sizeLog2);
+
         final MappedMemoryRange range = physicalMemory.getMemoryRange(physicalAddress);
         if (range == null) {
             throw new R5MemoryAccessException(address, R5.EXCEPTION_FAULT_STORE);
@@ -2322,14 +2332,17 @@ final class R5CPUTemplate implements R5CPU {
     private void lr_w(@Field("rd") final int rd,
                       @Field("rs1") final int rs1) throws R5MemoryAccessException {
         final long address = x[rs1];
-        if ((address & 0x08) != 0) // Feel free to remove if you want to tackle cross-page atomics
+        if ((address & 0x07) != 0) // Feel free to remove if you want to tackle cross-page atomics
             throw new R5MemoryAccessException(address, R5.EXCEPTION_MISALIGNED_LOAD);
 
         final int result = load32(address);
         reservation_set = address; // Consider changing this to the physical address for easier use
 
         if (rd != 0) {
-            x[rd] = result;
+            if (xlen == R5.XLEN_64) // Sign extend
+                x[rd] = (long) (int) result;
+            else
+                x[rd] = result;
         }
     }
 
@@ -2339,7 +2352,7 @@ final class R5CPUTemplate implements R5CPU {
                       @Field("rs2") final int rs2) throws R5MemoryAccessException {
         final int result;
         final long address = x[rs1];
-        if ((address & 0x08) != 0) // Feel free to remove if you want to tackle cross-page atomics
+        if ((address & 0x07) != 0) // Feel free to remove if you want to tackle cross-page atomics
             throw new R5MemoryAccessException(address, R5.EXCEPTION_MISALIGNED_STORE);
 
         if (address == reservation_set) {
@@ -2366,10 +2379,13 @@ final class R5CPUTemplate implements R5CPU {
 
         do {
             a = load32(address);
-        } while (!storeCAS(address, a + b, a, Sizes.SIZE_32, Sizes.SIZE_32_LOG2));
+        } while (!storeCAS(address, b, a, Sizes.SIZE_32, Sizes.SIZE_32_LOG2));
 
         if (rd != 0) {
-            x[rd] = a;
+            if (xlen == R5.XLEN_64) // Sign extend
+                x[rd] = (long)(int)a;
+            else
+                x[rd] = a;
         }
     }
 
@@ -2382,8 +2398,8 @@ final class R5CPUTemplate implements R5CPU {
         final int b = (int) x[rs2];
 
         do {
-           a = load32(address);
-        } while(!storeCAS(address, a + b, a, Sizes.SIZE_32, Sizes.SIZE_32_LOG2));
+            a = load32(address);
+        } while (!storeCAS(address, a + b, a, Sizes.SIZE_32, Sizes.SIZE_32_LOG2));
 
         if (rd != 0) {
             if (xlen == R5.XLEN_64) // Sign extend
@@ -2540,7 +2556,7 @@ final class R5CPUTemplate implements R5CPU {
     private void lr_d(@Field("rd") final int rd,
                       @Field("rs1") final int rs1) throws R5MemoryAccessException {
         final long address = x[rs1];
-        if ((address & 0x08) != 0) // Feel free to remove if you want to tackle cross-page atomics
+        if ((address & 0x07) != 0) // Feel free to remove if you want to tackle cross-page atomics
             throw new R5MemoryAccessException(address, R5.EXCEPTION_MISALIGNED_LOAD);
 
         final long result = load64(address);
@@ -2557,7 +2573,7 @@ final class R5CPUTemplate implements R5CPU {
                       @Field("rs2") final int rs2) throws R5MemoryAccessException {
         final int result;
         final long address = x[rs1];
-        if ((address & 0x08) != 0) // Feel free to remove if you want to tackle cross-page atomics
+        if ((address & 0x07) != 0) // Feel free to remove if you want to tackle cross-page atomics
             throw new R5MemoryAccessException(address, R5.EXCEPTION_MISALIGNED_STORE);
 
         if (address == reservation_set) {
